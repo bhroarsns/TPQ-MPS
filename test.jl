@@ -75,8 +75,8 @@ canonical_form!(ϕ, χ)
 khk1 = log(inner(ψ', h, ϕ))
 kk1 = logdot(ψ, ϕ)
 
-energy_density = Iterators.map(t -> [khk, khk1 + log(n) - log(t)], temps)
-beta_norm = Iterators.map(t -> [kk, kk1 + log(n) - log(t)], temps)
+energy_density = collect(Iterators.map(t -> [khk, khk1 + log(n) - log(t)], temps))
+beta_norm = collect(Iterators.map(t -> [kk, kk1 + log(n) - log(t)], temps))
 factors = fill(0.0, length(temps))
 
 for k = 1:k_max-1
