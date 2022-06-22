@@ -6,7 +6,7 @@ n = 16 # system size
 J = 1.0
 l = 1.0
 k_max = 500
-temps = 4.0:-0.05:3.95
+temps = 4.0:-0.05:0.05
 
 # prepare random MPS
 sites = siteinds("S=1/2", n)
