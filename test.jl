@@ -6,6 +6,7 @@ n = 16 # system size
 J = 1.0
 l = 1.0
 k_max = 500
+temps = 4.0:-0.05:3.95
 
 # prepare random MPS
 sites = siteinds("S=1/2", n)
@@ -29,8 +30,6 @@ h = let
     MPO(ampo, sites)
 end
 print("energy density operator successfully generated\n")
-
-temps = 4.0:-0.05:0.05
 
 function canonical_form!(A::MPS, max)
     len = length(A)
