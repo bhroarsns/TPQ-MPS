@@ -1,105 +1,57 @@
 using ITensors
 using Printf
 
-#calculation parameters
-n = 16 # system size
-χ = 20 # bond dimension
-J = 1.0
+include("./mps_tpq.jl")
+
+# physical feature
+n = 2 # system size
+J = 1.0 # Heisenberg model parameter
+# J = 4.0
+# Γ = 2.0
+
+# MPS parameters
+χ = 2 # auxiliary site dimension (for future updates)
+ξ = χ # bond dimension
+# mTPQ parameters
 l = 1.0
-k_max = 100
-temps = 4.0:-0.05:0.05
+k_max = 2
+# cTPQ parameters
+temp_delta = 0.05
+num_temps = 1
 
 # prepare random MPS
-sites = siteinds("S=1/2", n)
-sizehint!(sites, n + 2)
-pushfirst!(sites, Index(χ))
-push!(sites, Index(χ))
-ψ = randomMPS(Complex{Float64}, sites, χ)
-ψ[1] = delta(Complex{Float64}, sites[1], linkinds(ψ, 1))
-ψ[n + 2] = delta(Complex{Float64}, linkinds(ψ, n + 1), sites[n + 2])
-print("initial state successfully generated: norm = $(norm(ψ)) equals to sqrt(χ) = $(sqrt(χ))\n")
+ψ, sites = randomTPQMPS(n, χ, ξ)
 
 # prepare MPO
-h = let
-    JJ = J / n
-    ampo = OpSum()
-    for j = 2:n
-        ampo += JJ / 2.0, "S+", j, "S-", j+1
-        ampo += JJ / 2.0, "S-", j, "S+ ", j+1
-        ampo += JJ, "Sz", j, "Sz", j+1
-    end
-    MPO(ampo, sites)
-end
-
+h = heisenberg(sites, n, J)
 h2 = h' * h
-
-m = let
-    ampo = OpSum()
-    for j = 2:n+1
-        ampo += 1/n,"Sz", j
-    end
-    MPO(ampo, sites)
-end
-
+m = magnetization(sites, n)
 m2 = m' * m
 
-print("matrix product operators successfully generated\n")
-
-function canonical_form!(A::MPS, max)
-    len = length(A)
-    sites = siteinds(A)
-
-    if len != 1
-        U1, s1, V1 = LinearAlgebra.svd(A[1] * A[2], sites[1])
-        prev_link, _ = inds(s1)
-        A[1] = U1
-        A[2] = s1 * V1
-
-        for j = 2:len-1
-            Uj, sj, Vj = LinearAlgebra.svd(A[j] * A[j + 1], sites[j], prev_link)
-            prev_link, _ = inds(sj)
-            A[j] = Uj
-            A[j + 1] = sj * Vj
-        end
-
-        Vn, sn, Un = LinearAlgebra.svd(A[len - 1] * A[len], sites[len]; lefttags = "Link,l=$(len-1)", maxdim = max)
-        prev_link, _ = inds(sn)
-        A[len] = Vn
-        A[len - 1] = Un * sn
-
-        for j = len-1:-1:3
-            Vj, sj, Uj = LinearAlgebra.svd(A[j - 1] * A[j], sites[j], prev_link; lefttags = "Link,l=$(j-1)", maxdim = max)
-            prev_link, _ = inds(sj)
-            A[j] = Vj
-            A[j - 1] = Uj * sj
-        end
-    end
-
-    # print("\tcanonicalization finished")
-end
-
-print("start calculating canonical summation\n")
+println("start calculating canonical summation")
+# temperatures to calculate cTPQ
+temps = (num_temps * temp_delta):-temp_delta:temp_delta
 
 print("step 001")
-km2k = log(inner(ψ'', m2, ψ))
-kmk = log(inner(ψ', m, ψ))
-kh2k = log(inner(ψ'', h2, ψ))
 khk = log(inner(ψ', h, ψ))
+kh2k = log(inner(ψ'', h2, ψ))
+kmk = log(inner(ψ', m, ψ))
+km2k = log(inner(ψ'', m2, ψ))
 kk = lognorm(ψ) * 2
 
 ϕ = l * ψ - apply(h, ψ)
 print("\tmTPQ state(k = 002) generated")
-canonical_form!(ϕ, χ)
-km2k1 = log(inner(ψ'', m2, ϕ))
-kmk1 = log(inner(ψ', m, ϕ))
-kh2k1 = log(inner(ψ'', h2, ϕ))
+canonicalform!(ϕ, χ)
 khk1 = log(inner(ψ', h, ϕ))
+kh2k1 = log(inner(ψ'', h2, ϕ))
+kmk1 = log(inner(ψ', m, ϕ))
+km2k1 = log(inner(ψ'', m2, ϕ))
 kk1 = logdot(ψ, ϕ)
 
-energy_2 = collect(Iterators.map(t -> [kh2k, kh2k1 + log(n) - log(t)], temps))
 energy = collect(Iterators.map(t -> [khk, khk1 + log(n) - log(t)], temps))
-magnet_2 = collect(Iterators.map(t -> [km2k, km2k1 + log(n) - log(t)], temps))
+energy_2 = collect(Iterators.map(t -> [kh2k, kh2k1 + log(n) - log(t)], temps))
 magnet = collect(Iterators.map(t -> [kmk, kmk1 + log(n) - log(t)], temps))
+magnet_2 = collect(Iterators.map(t -> [km2k, km2k1 + log(n) - log(t)], temps))
 beta_norm = collect(Iterators.map(t -> [kk, kk1 + log(n) - log(t)], temps))
 factors = fill(0.0, length(temps))
 
@@ -115,7 +67,7 @@ for k = 1:k_max-1
 
     global ϕ = l * ψ - apply(h, ψ)
     @printf "mTPQ state(k = %03i) generated" k+2
-    canonical_form!(ϕ, χ)
+    canonicalform!(ϕ, χ)
     local km2k1 = log(inner(ψ'', m2, ϕ))
     local kmk1 = log(inner(ψ', m, ϕ))
     local kh2k1 = log(inner(ψ'', h2, ϕ))
