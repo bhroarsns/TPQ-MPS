@@ -39,8 +39,8 @@ end
 function randomTPQMPS(system_size, χ, ξ=χ, sitetype="S=1/2")
     sites = siteinds(sitetype, system_size)
     sizehint!(sites, system_size + 2)
-    pushfirst!(sites, Index(χ))
-    push!(sites, Index(χ))
+    pushfirst!(sites, Index(χ, tags="Site,aux-L"))
+    push!(sites, Index(χ, tags="Site,aux-R"))
     ψ = randomMPS(Complex{Float64}, sites, ξ)
     ψ[1] = delta(Complex{Float64}, sites[1], linkinds(ψ, 1))
     ψ[system_size + 2] = delta(Complex{Float64}, linkinds(ψ, system_size + 1), sites[system_size + 2])
@@ -80,29 +80,30 @@ function canonicalform!(A::MPS, max)
     end
 end
 
-function canonicalsummation(init::MPS, h::MPO, χ, k_max, temp_delta, num_temps)
+function canonicalsummation(init::MPS, h::MPO, χ, l, k_max, temp_delta, num_temps, m)
     println("start calculating canonical summation")
 
     # temperatures to calculate cTPQ
     temps = (num_temps * temp_delta):-temp_delta:temp_delta
     println("temperature range: $(temp_delta) to $(num_temps * temp_delta)")
 
-    print("step 001")
+    print("step 000")
     ψ = deepcopy(init)
-    khk = log(inner(ψ', h, ψ))
-    kh2k = log(inner(ψ'', h2, ψ))
-    kmk = log(inner(ψ', m, ψ))
-    km2k = log(inner(ψ'', m2, ψ))
-    kk = lognorm(ψ) * 2
+    khk = inner(ψ', h, ψ)
+    kh2k = inner(h, ψ, h, ψ)
+    kmk = inner(ψ', m, ψ)
+    km2k = inner(m, ψ, m, ψ)
+    kk = 1
 
     ϕ = l * ψ - apply(h, ψ)
-    print("\tmTPQ state(k = 002) generated")
+    print("\tmTPQ state(k = 001) generated")
     canonicalform!(ϕ, χ)
-    khk1 = log(inner(ψ', h, ϕ))
-    kh2k1 = log(inner(ψ'', h2, ϕ))
-    kmk1 = log(inner(ψ', m, ϕ))
-    km2k1 = log(inner(ψ'', m2, ϕ))
-    kk1 = logdot(ψ, ϕ)
+
+    khk1 = l * khk - kh2k # ⟨k|h|k+1⟩ = ⟨k|h(l - h)|k⟩ = l⟨k|h|k⟩ - ⟨k|h²|k⟩
+    kh2k1 = inner(h, ψ, h, ϕ)
+    kmk1 = inner(ψ', m, ϕ)
+    km2k1 = inner(m, ψ, m, ϕ)
+    kk1 = l - khk # ⟨k|k+1⟩ = ⟨k|(l - h)|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩
 
     energy = collect(Iterators.map(t -> [khk, khk1 + log(n) - log(t)], temps))
     energy_2 = collect(Iterators.map(t -> [kh2k, kh2k1 + log(n) - log(t)], temps))
@@ -119,7 +120,6 @@ function canonicalsummation(init::MPS, h::MPO, χ, k_max, temp_delta, num_temps)
         local kh2k = log(inner(ψ'', h2, ψ))
         local khk = log(inner(ψ', h, ψ))
         local kk = lognorm(ψ) * 2
-        # println(inner(ψ', h, ψ) / norm(ψ) / norm(ψ))
 
         global ϕ = l * ψ - apply(h, ψ)
         @printf "mTPQ state(k = %03i) generated" k+2
