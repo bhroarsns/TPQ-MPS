@@ -3,7 +3,7 @@ export heisenberg, transverseising, magnetization, randomTPQMPS, canonicalform!,
 using ITensors
 using Printf
 
-function heisenberg(sites, n, J)
+function heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64)
     JJ = J / n
     mpo = OpSum()
     for j = 2:n
@@ -15,7 +15,7 @@ function heisenberg(sites, n, J)
     return MPO(mpo, sites)
 end
 
-function transverseising(sites, n, J, Γ)
+function transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ::Float64)
     JJ = J / n
     ΓΓ = Γ / n
     mpo = OpSum()
@@ -28,7 +28,7 @@ function transverseising(sites, n, J, Γ)
     return MPO(mpo, sites)
 end
 
-function magnetization(sites, n)
+function magnetization(sites::Vector{Index{Int64}}, n::Int64)
     mpo = OpSum()
     for j = 2:n+1
         mpo += 1/n,"Sz", j
@@ -37,7 +37,7 @@ function magnetization(sites, n)
     return MPO(mpo, sites)
 end
 
-function randomTPQMPS(system_size, χ, ξ=χ, sitetype="S=1/2")
+function randomTPQMPS(system_size::Int64, χ::Int64, ξ::Int64, sitetype::String="S=1/2")
     sites = siteinds(sitetype, system_size)
     sizehint!(sites, system_size + 2)
     pushfirst!(sites, Index(χ, tags="Site,aux-L"))
@@ -50,7 +50,7 @@ function randomTPQMPS(system_size, χ, ξ=χ, sitetype="S=1/2")
     return (ψ, sites)
 end
 
-function canonicalform!(A::MPS, ξ, χ)
+function canonicalform!(A::MPS, ξ::Int64, χ::Int64)
     len = length(A)
     sites = siteinds(A)
 
@@ -81,7 +81,7 @@ function canonicalform!(A::MPS, ξ, χ)
     end
 end
 
-function canonicalsummation(init::MPS, h::MPO, ξ, χ, l, kmax, tempstep, numtemps, m)
+function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64, kmax::Int64, tempstep::Float64, numtemps::Int64, m::MPO)
     println("start calculating canonical summation")
 
     n = length(init) - 2
@@ -95,30 +95,34 @@ function canonicalsummation(init::MPS, h::MPO, ξ, χ, l, kmax, tempstep, numtem
 
     # temperatures to calculate cTPQ
     temps = (numtemps * tempstep):-tempstep:tempstep
-    println("temperature range: $(tempstep) to $(numtemps * tempstep)")
+    println("temperature range: from $(tempstep) to $(numtemps * tempstep)")
     
     ψ = deepcopy(init)
     normalize!(ψ)
 
-    for k = 0:kmax
-        @printf "\rstep %03i\t" k
+    h2 = h' * h
+    m2 = m' * m
 
-        global khk = inner(ψ', h, ψ)
-        global kh2k = inner(h, ψ, h, ψ)
-        global kmk = log(inner(ψ', m, ψ))
-        global km2k = log(inner(m, ψ, m, ψ))
+    for k = 0:kmax
+        @printf "\rstep %03i" k
+
+        khk = inner(ψ', h, ψ)
+        kh2k = inner(ψ'', h2, ψ)
+        kmk = log(inner(ψ', m, ψ))
+        km2k = log(inner(ψ'', m2, ψ))
 
         global ϕ = l * ψ - apply(h, ψ)
-        @printf "mTPQ state(k = %03i) generated" k+1
+        # @printf "\tmTPQ state(k = %03i) generated" k+1
         canonicalform!(ϕ, ξ, χ)
+        # print("\tcanonicalization finished")
 
-        global khk1 = log(l * khk - kh2k) # ⟨k|h|k+1⟩ = ⟨k|h(l - h)|k⟩ = l⟨k|h|k⟩ - ⟨k|h²|k⟩
-        global kh2k = log(kh2k)
-        global kh2k1 = log(inner(h, ψ, h, ϕ))
-        global kmk1 = log(inner(ψ', m, ϕ))
-        global km2k1 = log(inner(m, ψ, m, ϕ))
-        global kk1 = log(l - khk) # ⟨k|k+1⟩ = ⟨k|(l - h)|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩
-        global khk = log(khk)
+        khk1 = log(l * khk - kh2k) # ⟨k|h|k+1⟩ = ⟨k|h(l - h)|k⟩ = l⟨k|h|k⟩ - ⟨k|h²|k⟩
+        kh2k = log(kh2k)
+        kh2k1 = log(inner(ψ'', h2, ϕ))
+        kmk1 = log(inner(ψ', m, ϕ))
+        km2k1 = log(inner(ψ'', m2, ϕ))
+        kk1 = log(l - khk) # ⟨k|k+1⟩ = ⟨k|(l - h)|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩
+        khk = log(khk)
 
         global ψ = deepcopy(ϕ)
         norm_k = []
@@ -137,10 +141,10 @@ function canonicalsummation(init::MPS, h::MPO, ξ, χ, l, kmax, tempstep, numtem
             magnet2[i, 2k+2] = km2k1 + new_factor
             beta_norm[i, 2k+1] = factor
             beta_norm[i, 2k+2] = kk1 + new_factor
-            factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + norm_k[1]
+            factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + 2 * norm_k[1]
         end
     end
-    print("\ncanonical summation finished\n")
+    println("\ncanonical summation finished")
 
     open("output.dat", "w") do io
         for (i, t) in enumerate(temps)
@@ -149,7 +153,7 @@ function canonicalsummation(init::MPS, h::MPO, ξ, χ, l, kmax, tempstep, numtem
             sort!(magnet[i, :]; by = x -> real(x))
             sort!(magnet2[i, :]; by = x -> real(x))
             sort!(beta_norm[i, :]; by = x -> real(x))
-        
+
             divider = real(last(beta_norm[i, :]))
         
             ene = 0.0
@@ -183,7 +187,7 @@ function canonicalsummation(init::MPS, h::MPO, ξ, χ, l, kmax, tempstep, numtem
             dev_ene = ene2 / bet_nor - ene^2
             dev_mag = mag2 / bet_nor - mag^2
             
-            write(io, "$t\t$(real(ene))\t$(real(mag))\t$(real(dev_ene)/t^2)\t$(n*real(dev_mag)/t)\n")
+            write(io, "$t\t$(real(ene))\t$(real(mag))\t$(n*real(dev_ene)/t^2)\t$(n*real(dev_mag)/t)\n")
         end
     end
 end
