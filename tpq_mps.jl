@@ -1,6 +1,7 @@
 export heisenberg, transverseising, magnetization, randomTPQMPS, canonicalform!, canonicalsummation
 
 using ITensors
+using Printf
 
 function heisenberg(sites, n, J)
     JJ = J / n
@@ -49,7 +50,7 @@ function randomTPQMPS(system_size, χ, ξ=χ, sitetype="S=1/2")
     return (ψ, sites)
 end
 
-function canonicalform!(A::MPS, max)
+function canonicalform!(A::MPS, ξ, χ)
     len = length(A)
     sites = siteinds(A)
 
@@ -66,13 +67,13 @@ function canonicalform!(A::MPS, max)
             A[j + 1] = sj * Vj
         end
 
-        Vn, sn, Un = LinearAlgebra.svd(A[len - 1] * A[len], sites[len]; lefttags = "Link,l=$(len-1)", maxdim = max)
+        Vn, sn, Un = LinearAlgebra.svd(A[len - 1] * A[len], sites[len]; lefttags = "Link,l=$(len-1)", maxdim = χ)
         prev_link, _ = inds(sn)
         A[len] = Vn
         A[len - 1] = Un * sn
 
         for j = len-1:-1:3
-            Vj, sj, Uj = LinearAlgebra.svd(A[j - 1] * A[j], sites[j], prev_link; lefttags = "Link,l=$(j-1)", maxdim = max)
+            Vj, sj, Uj = LinearAlgebra.svd(A[j - 1] * A[j], sites[j], prev_link; lefttags = "Link,l=$(j-1)", maxdim = ξ)
             prev_link, _ = inds(sj)
             A[j] = Vj
             A[j - 1] = Uj * sj
@@ -80,106 +81,109 @@ function canonicalform!(A::MPS, max)
     end
 end
 
-function canonicalsummation(init::MPS, h::MPO, χ, l, k_max, temp_delta, num_temps, m)
+function canonicalsummation(init::MPS, h::MPO, ξ, χ, l, kmax, tempstep, numtemps, m)
     println("start calculating canonical summation")
 
+    n = length(init) - 2
+
+    energy = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    energy2 = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    magnet = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    magnet2 = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    beta_norm = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    factors = zeros(Complex{Float64}, numtemps, kmax + 2)
+
     # temperatures to calculate cTPQ
-    temps = (num_temps * temp_delta):-temp_delta:temp_delta
-    println("temperature range: $(temp_delta) to $(num_temps * temp_delta)")
-
-    print("step 000")
+    temps = (numtemps * tempstep):-tempstep:tempstep
+    println("temperature range: $(tempstep) to $(numtemps * tempstep)")
+    
     ψ = deepcopy(init)
-    khk = inner(ψ', h, ψ)
-    kh2k = inner(h, ψ, h, ψ)
-    kmk = inner(ψ', m, ψ)
-    km2k = inner(m, ψ, m, ψ)
-    kk = 1
+    normalize!(ψ)
 
-    ϕ = l * ψ - apply(h, ψ)
-    print("\tmTPQ state(k = 001) generated")
-    canonicalform!(ϕ, χ)
+    for k = 0:kmax
+        @printf "\rstep %03i\t" k
 
-    khk1 = l * khk - kh2k # ⟨k|h|k+1⟩ = ⟨k|h(l - h)|k⟩ = l⟨k|h|k⟩ - ⟨k|h²|k⟩
-    kh2k1 = inner(h, ψ, h, ϕ)
-    kmk1 = inner(ψ', m, ϕ)
-    km2k1 = inner(m, ψ, m, ϕ)
-    kk1 = l - khk # ⟨k|k+1⟩ = ⟨k|(l - h)|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩
-
-    energy = collect(Iterators.map(t -> [khk, khk1 + log(n) - log(t)], temps))
-    energy_2 = collect(Iterators.map(t -> [kh2k, kh2k1 + log(n) - log(t)], temps))
-    magnet = collect(Iterators.map(t -> [kmk, kmk1 + log(n) - log(t)], temps))
-    magnet_2 = collect(Iterators.map(t -> [km2k, km2k1 + log(n) - log(t)], temps))
-    beta_norm = collect(Iterators.map(t -> [kk, kk1 + log(n) - log(t)], temps))
-    factors = fill(0.0, length(temps))
-
-    for k = 1:k_max-1
-        @printf "\rstep %03i\t" k+1
-        global ψ = deepcopy(ϕ)
-        local km2k = log(inner(ψ'', m2, ψ))
-        local kmk = log(inner(ψ', m, ψ))
-        local kh2k = log(inner(ψ'', h2, ψ))
-        local khk = log(inner(ψ', h, ψ))
-        local kk = lognorm(ψ) * 2
+        global khk = inner(ψ', h, ψ)
+        global kh2k = inner(h, ψ, h, ψ)
+        global kmk = log(inner(ψ', m, ψ))
+        global km2k = log(inner(m, ψ, m, ψ))
 
         global ϕ = l * ψ - apply(h, ψ)
-        @printf "mTPQ state(k = %03i) generated" k+2
-        canonicalform!(ϕ, χ)
-        local km2k1 = log(inner(ψ'', m2, ϕ))
-        local kmk1 = log(inner(ψ', m, ϕ))
-        local kh2k1 = log(inner(ψ'', h2, ϕ))
-        local khk1 = log(inner(ψ', h, ϕ))
-        local kk1 = logdot(ψ, ϕ)
+        @printf "mTPQ state(k = %03i) generated" k+1
+        canonicalform!(ϕ, ξ, χ)
 
-        for (i, t) in Iterators.enumerate(temps)
-            factors[i] += 2*log(n) - 2*log(t) - log(2k-1) - log(2k)
-            magnet_2[i] = cat(magnet_2[i], [km2k + factors[i], km2k1 + factors[i] + log(n) - log(t) - log(2k + 1)], dims=1)
-            magnet[i] = cat(magnet[i], [kmk + factors[i], kmk1 + factors[i] + log(n) - log(t) - log(2k + 1)], dims=1)
-            energy_2[i] = cat(energy_2[i], [kh2k + factors[i], kh2k1 + factors[i] + log(n) - log(t) - log(2k + 1)], dims=1)
-            energy[i] = cat(energy[i], [khk + factors[i], khk1 + factors[i] + log(n) - log(t) - log(2k + 1)], dims=1)
-            beta_norm[i] = cat(beta_norm[i], [kk + factors[i], kk1 + factors[i] + log(n) - log(t) - log(2k + 1)], dims=1)
+        global khk1 = log(l * khk - kh2k) # ⟨k|h|k+1⟩ = ⟨k|h(l - h)|k⟩ = l⟨k|h|k⟩ - ⟨k|h²|k⟩
+        global kh2k = log(kh2k)
+        global kh2k1 = log(inner(h, ψ, h, ϕ))
+        global kmk1 = log(inner(ψ', m, ϕ))
+        global km2k1 = log(inner(m, ψ, m, ϕ))
+        global kk1 = log(l - khk) # ⟨k|k+1⟩ = ⟨k|(l - h)|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩
+        global khk = log(khk)
+
+        global ψ = deepcopy(ϕ)
+        norm_k = []
+        normalize!(ψ; (lognorm!)=norm_k)
+
+        for (i, t) in enumerate(temps)
+            factor = factors[i, k+1]
+            new_factor = factor + log(n) - log(t) - log(2k + 1)
+            energy[i, 2k+1] = khk + factor
+            energy[i, 2k+2] = khk1 + new_factor
+            energy2[i, 2k+1] = kh2k + factor
+            energy2[i, 2k+2] = kh2k1 + new_factor
+            magnet[i, 2k+1] = kmk + factor
+            magnet[i, 2k+2] = kmk1 + new_factor
+            magnet2[i, 2k+1] = km2k + factor
+            magnet2[i, 2k+2] = km2k1 + new_factor
+            beta_norm[i, 2k+1] = factor
+            beta_norm[i, 2k+2] = kk1 + new_factor
+            factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + norm_k[1]
         end
     end
     print("\ncanonical summation finished\n")
 
     open("output.dat", "w") do io
-        for (i, t) in Iterators.enumerate(temps)
-            sort!(magnet_2[i]; by = x -> real(x), rev = true)
-            sort!(magnet[i]; by = x -> real(x), rev = true)
-            sort!(energy_2[i]; by = x -> real(x), rev = true)
-            sort!(energy[i]; by = x -> real(x), rev = true)
-            sort!(beta_norm[i]; by = x -> real(x), rev = true)
+        for (i, t) in enumerate(temps)
+            sort!(energy[i, :]; by = x -> real(x))
+            sort!(energy2[i, :]; by = x -> real(x))
+            sort!(magnet[i, :]; by = x -> real(x))
+            sort!(magnet2[i, :]; by = x -> real(x))
+            sort!(beta_norm[i, :]; by = x -> real(x))
         
-            divider = real(first(beta_norm[i]))
+            divider = real(last(beta_norm[i, :]))
         
-            mag2 = 0.0
-            for e in reverse(magnet_2[i])
-                mag2 += exp(e - divider)
-            end
-
-            mag = 0.0
-            for e in reverse(magnet[i])
-                mag += exp(e - divider)
+            ene = 0.0
+            for e in energy[i, :]
+                ene += exp(e - divider)
             end
 
             ene2 = 0.0
-            for e in reverse(energy_2[i])
+            for e in energy2[i, :]
                 ene2 += exp(e - divider)
             end
 
-            ene = 0.0
-            for e in reverse(energy[i])
-                ene += exp(e - divider)
+            mag = 0.0
+            for e in magnet[i, :]
+                mag += exp(e - divider)
+            end
+
+            mag2 = 0.0
+            for e in magnet2[i, :]
+                mag2 += exp(e - divider)
             end
         
             bet_nor = 0.0
-            for b in reverse(beta_norm[i])
+            for b in beta_norm[i, :]
                 bet_nor += exp(b - divider)
             end
 
-            dev_ene = ene2 / bet_nor - (ene / bet_nor)^2
-            dev_mag = mag2 / bet_nor - (mag / bet_nor)^2
+            ene = ene / bet_nor
+            mag = mag / bet_nor
+
+            dev_ene = ene2 / bet_nor - ene^2
+            dev_mag = mag2 / bet_nor - mag^2
             
-            write(io, "$t\t$(real(ene/bet_nor))\t$(real(mag/bet_nor))\t$(real(dev_ene)/t^2)\t$(n*real(dev_mag)/t)\n")
+            write(io, "$t\t$(real(ene))\t$(real(mag))\t$(real(dev_ene)/t^2)\t$(n*real(dev_mag)/t)\n")
         end
     end
 end
