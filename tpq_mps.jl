@@ -81,7 +81,7 @@ function canonicalform!(A::MPS, ξ::Int64, χ::Int64)
     end
 end
 
-function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64, kmax::Int64, tempstep::Float64, numtemps::Int64, m::MPO)
+function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64, kmax::Int64, tempstep::Float64, numtemps::Int64, m::MPO, filename::String="output")
     println("start calculating canonical summation")
 
     n = length(init) - 2
@@ -96,12 +96,14 @@ function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64,
     # temperatures to calculate cTPQ
     temps = (numtemps * tempstep):-tempstep:tempstep
     println("temperature range: from $(tempstep) to $(numtemps * tempstep)")
-    
+
     ψ = deepcopy(init)
     normalize!(ψ)
 
     h2 = h' * h
     m2 = m' * m
+
+    mtpq_data = zeros(Complex{Float64}, kmax+1, 2)
 
     for k = 0:kmax
         @printf "\rstep %03i" k
@@ -111,7 +113,10 @@ function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64,
         kmk = log(inner(ψ', m, ψ))
         km2k = log(inner(ψ'', m2, ψ))
 
-        global ϕ = l * ψ - apply(h, ψ)
+        mtpq_data[k+1, 1] = khk
+        mtpq_data[k+1, 2] = kh2k
+
+        ϕ = l * ψ - apply(h, ψ)
         # @printf "\tmTPQ state(k = %03i) generated" k+1
         canonicalform!(ϕ, ξ, χ)
         # print("\tcanonicalization finished")
@@ -124,7 +129,7 @@ function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64,
         kk1 = log(l - khk) # ⟨k|k+1⟩ = ⟨k|(l - h)|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩
         khk = log(khk)
 
-        global ψ = deepcopy(ϕ)
+        ψ = deepcopy(ϕ)
         norm_k = []
         normalize!(ψ; (lognorm!)=norm_k)
 
@@ -144,40 +149,47 @@ function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64,
             factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + 2 * norm_k[1]
         end
     end
+
+    open(string(filename, "_mtpq.dat"), "w") do io
+        for k in 1:kmax+1
+            write(io, "$(real(n*(l - mtpq_data[k, 1])/2(k-1)))\t$(real(mtpq_data[k, 1]))\t$(real(mtpq_data[k, 2] - mtpq_data[k, 1]^2))\n")
+        end
+    end
+
     println("\ncanonical summation finished")
 
-    open("output.dat", "w") do io
+    open(string(filename, "_ctpq.dat"), "w") do io
         for (i, t) in enumerate(temps)
-            sort!(energy[i, :]; by = x -> real(x))
-            sort!(energy2[i, :]; by = x -> real(x))
-            sort!(magnet[i, :]; by = x -> real(x))
-            sort!(magnet2[i, :]; by = x -> real(x))
-            sort!(beta_norm[i, :]; by = x -> real(x))
+            energyt = sort(energy[i, :]; by = x -> real(x))
+            energy2t = sort(energy2[i, :]; by = x -> real(x))
+            magnett = sort(magnet[i, :]; by = x -> real(x))
+            magnet2t = sort(magnet2[i, :]; by = x -> real(x))
+            beta_normt = sort(beta_norm[i, :]; by = x -> real(x))
 
-            divider = real(last(beta_norm[i, :]))
+            divider = real(last(beta_normt))
         
             ene = 0.0
-            for e in energy[i, :]
+            for e in energyt
                 ene += exp(e - divider)
             end
 
             ene2 = 0.0
-            for e in energy2[i, :]
+            for e in energy2t
                 ene2 += exp(e - divider)
             end
 
             mag = 0.0
-            for e in magnet[i, :]
+            for e in magnett
                 mag += exp(e - divider)
             end
 
             mag2 = 0.0
-            for e in magnet2[i, :]
+            for e in magnet2t
                 mag2 += exp(e - divider)
             end
         
             bet_nor = 0.0
-            for b in beta_norm[i, :]
+            for b in beta_normt
                 bet_nor += exp(b - divider)
             end
 
