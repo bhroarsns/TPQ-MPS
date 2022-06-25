@@ -1,3 +1,6 @@
+# Current issues
+*比熱の計算が合わない
+
 # Canonical Summation
 $$\braket{\beta|\hat{A}|\beta} = {\rm e}^{-\beta N l} \sum_k \left(\frac{(N\beta)^{2k}}{(2k)!} \braket{k|\hat{A}|k} + \frac{(N\beta)^{2k + 1}}{(2k + 1)!} \braket{k|\hat{A}|k + 1}\right)$$
 
