@@ -3,8 +3,35 @@ export heisenberg, transverseising, magnetization, randomTPQMPS, canonicalform!,
 using ITensors
 using Printf
 
-function heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64)
+function l_heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64, l::Float64)
     JJ = J / n
+    mpo = OpSum()
+    mpo += l, "I", 1
+    for j = 2:n
+        mpo += -JJ / 2.0, "S+", j, "S-", j+1
+        mpo += -JJ / 2.0, "S-", j, "S+ ", j+1
+        mpo += -JJ, "Sz", j, "Sz", j+1
+    end
+    println("MPO of the iteration operator of the Heisenberg model generated")
+    return MPO(mpo, sites)
+end
+
+function l_transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ::Float64, l::Float64)
+    JJ = J / n
+    ΓΓ = Γ / n
+    mpo = OpSum()
+    mpo += l, "I", 1
+    for j = 2:n
+        mpo += -JJ, "Sz", j, "Sz", j+1
+        mpo += -ΓΓ, "Sx", j
+    end
+    mpo += ΓΓ, "Sx", n + 1
+    println("MPO of the iteration operator of the transverse Ising model generated")
+    return MPO(mpo, sites)
+end
+
+function heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64)
+    JJ = J
     mpo = OpSum()
     for j = 2:n
         mpo += JJ / 2.0, "S+", j, "S-", j+1
@@ -16,8 +43,8 @@ function heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64)
 end
 
 function transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ::Float64)
-    JJ = J / n
-    ΓΓ = Γ / n
+    JJ = J
+    ΓΓ = Γ
     mpo = OpSum()
     for j = 2:n
         mpo += JJ, "Sz", j, "Sz", j+1
@@ -31,7 +58,7 @@ end
 function magnetization(sites::Vector{Index{Int64}}, n::Int64)
     mpo = OpSum()
     for j = 2:n+1
-        mpo += 1/n,"Sz", j
+        mpo += "Sz", j
     end
     println("MPO of magnetization generated")
     return MPO(mpo, sites)
