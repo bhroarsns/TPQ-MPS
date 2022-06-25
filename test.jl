@@ -4,16 +4,16 @@ using Printf
 include("./tpq_mps.jl")
 
 # physical feature
-n = 8 # system size
-J = 1.0 # Heisenberg model parameter
-# J = 4.0
-# Γ = 2.0
+n = 4 # system size
+# J = 1.0 # Heisenberg model parameter
+J = 4.0
+Γ = 2.0
 
 # MPS parameters
-χ = 20 # auxiliary site dimension (for future updates)
+χ = 10 # auxiliary site dimension (for future updates)
 ξ = χ # bond dimension
 # mTPQ parameters
-l = 1.0
+l = 5.0
 kmax = 500
 # cTPQ parameters
 tempstep = 0.05
@@ -23,10 +23,13 @@ numtemps = 80
 ψ, sites = randomTPQMPS(n, χ, ξ)
 
 # prepare MPO
-h = heisenberg(sites, n, J)
+# l_h = l_heisenberg(sites, n, J, l)
+# h = heisenberg(sites, n, J)
+l_h = l_transverseising(sites, n, J, Γ, l)
+h = transverseising(sites, n, J, Γ)
 m = magnetization(sites, n)
 
-canonicalsummation(ψ, h, ξ, χ, l, kmax, tempstep, numtemps, m)
+# canonicalsummation(ψ, h, ξ, χ, l, kmax, tempstep, numtemps, m)
 
 filename = "output"
 println("start calculating canonical summation")
@@ -45,42 +48,34 @@ temps = (numtemps * tempstep):-tempstep:tempstep
 println("temperature range: from $(tempstep) to $(numtemps * tempstep)")
 
 # ψ = deepcopy(init)
-normalize!(ψ)
-
 h2 = h' * h
 m2 = m' * m
 
 mtpq_data = zeros(Complex{Float64}, kmax+1, 2)
 
 for k = 0:kmax
-    if k % 50 == 0
-        @printf "\rstep %03i" k
-    end
-
-    khk = inner(ψ', h, ψ)
-    kh2k = inner(ψ'', h2, ψ)
+    @printf "\rstep %03i" k
+    
+    khk = log(inner(ψ', h, ψ))
+    kh2k = log(inner(ψ'', h2, ψ))
     kmk = log(inner(ψ', m, ψ))
     km2k = log(inner(ψ'', m2, ψ))
 
-    mtpq_data[k+1, 1] = khk
-    mtpq_data[k+1, 2] = kh2k
-
-    ϕ = l * ψ - apply(h, ψ)
-    # @printf "\tmTPQ state(k = %03i) generated" k+1
+    mtpq_data[k+1, 1] = exp(khk)
+    mtpq_data[k+1, 2] = exp(kh2k)
+    
+    ϕ = apply(l_h, ψ)
     canonicalform!(ϕ, ξ, χ)
-    # print("\tcanonicalization finished")
 
-    khk1 = log(l * khk - kh2k) # ⟨k|h|k+1⟩ = ⟨k|h(l - h)|k⟩ = l⟨k|h|k⟩ - ⟨k|h²|k⟩
-    kh2k = log(kh2k)
+    khk1 = log(inner(ψ', h, ϕ))
     kh2k1 = log(inner(ψ'', h2, ϕ))
     kmk1 = log(inner(ψ', m, ϕ))
-    km2k1 = log(inner(m, ψ, m, ϕ))
-    kk1 = log(l - khk) # ⟨k|k+1⟩ = ⟨k|(l - h)|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩
-    khk = log(khk)
+    km2k1 = log(inner(ψ'', m2, ϕ))
+    kk1 = logdot(ψ, ϕ)
 
     ψ = deepcopy(ϕ)
-    norm_k = []
-    normalize!(ψ; (lognorm!)=norm_k)
+    kk = norm(ψ)
+    ψ = ψ / kk
 
     for (i, t) in enumerate(temps)
         factor = factors[i, k+1]
@@ -95,7 +90,7 @@ for k = 0:kmax
         magnet2[i, 2k+2] = km2k1 + new_factor
         beta_norm[i, 2k+1] = factor
         beta_norm[i, 2k+2] = kk1 + new_factor
-        factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + 2 * norm_k[1]
+        factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + 2.0 * log(kk)
     end
 end
 
@@ -148,6 +143,6 @@ open(string(filename, "_ctpq.dat"), "w") do io
         dev_ene = ene2 / bet_nor - ene^2
         dev_mag = mag2 / bet_nor - mag^2
         
-        write(io, "$t\t$(real(ene))\t$(real(mag))\t$(n*real(dev_ene)/t^2)\t$(n*real(dev_mag)/t)\n")
+        write(io, "$t\t$(real(ene) / n)\t$(real(mag) / n)\t$(real(dev_ene) / t^2 / n)\t$(real(dev_mag) / t / n)\n")
     end
 end
