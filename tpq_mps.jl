@@ -105,115 +105,114 @@ function canonicalform!(A::MPS, ξ::Int64, χ::Int64)
     end
 end
 
-function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64, kmax::Int64, tempstep::Float64, numtemps::Int64, m::MPO, filename::String="output")
+function canonicalsummation(init::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int64=ξ, kmax::Int64=500, tempstep::Float64=0.05, numtemps::Int64=80, filename::String="output")
     println("start calculating canonical summation")
+    ψ = deepcopy(init)
+    n = length(ψ) - 2
 
-    n = length(init) - 2
+    # operator preparation
+    m = magnetization(siteinds(ψ), n)
+    h2 = h' * h
+    m2 = m' * m
+    # h2 = contract(h', h, cutoff=-Inf)
+    # m2 = contract(m', m, cutoff=-Inf)
 
-    energy = zeros(Complex{Float64}, numtemps, 2kmax + 2)
-    energy2 = zeros(Complex{Float64}, numtemps, 2kmax + 2)
-    magnet = zeros(Complex{Float64}, numtemps, 2kmax + 2)
-    magnet2 = zeros(Complex{Float64}, numtemps, 2kmax + 2)
-    beta_norm = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    # data storage
+    energys = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    energysquares = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    magnets = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    magnetsquares = zeros(Complex{Float64}, numtemps, 2kmax + 2)
+    betanorms = zeros(Complex{Float64}, numtemps, 2kmax + 2)
     factors = zeros(Complex{Float64}, numtemps, kmax + 2)
+    mtpqdata = zeros(Complex{Float64}, kmax+1, 2)
 
     # temperatures to calculate cTPQ
     temps = (numtemps * tempstep):-tempstep:tempstep
     println("temperature range: from $(tempstep) to $(numtemps * tempstep)")
 
-    ψ = deepcopy(init)
-    normalize!(ψ)
-
-    h2 = h' * h
-    m2 = m' * m
-
-    mtpq_data = zeros(Complex{Float64}, kmax+1, 2)
-
     for k = 0:kmax
         @printf "\rstep %03i" k
-
-        khk = inner(ψ', h, ψ)
-        kh2k = inner(ψ'', h2, ψ)
+        
+        khk = log(inner(ψ', h, ψ))
+        kh2k = log(inner(ψ'', h2, ψ))
         kmk = log(inner(ψ', m, ψ))
         km2k = log(inner(ψ'', m2, ψ))
 
-        mtpq_data[k+1, 1] = khk
-        mtpq_data[k+1, 2] = kh2k
-
-        ϕ = l * ψ - apply(h, ψ)
-        # @printf "\tmTPQ state(k = %03i) generated" k+1
+        mtpqdata[k+1, 1] = exp(khk)
+        mtpqdata[k+1, 2] = exp(kh2k)
+        
+        ϕ = apply(l_h, ψ)
         canonicalform!(ϕ, ξ, χ)
-        # print("\tcanonicalization finished")
 
-        khk1 = log(l * khk - kh2k) # ⟨k|h|k+1⟩ = ⟨k|h(l - h)|k⟩ = l⟨k|h|k⟩ - ⟨k|h²|k⟩
-        kh2k = log(kh2k)
+        khk1 = log(inner(ψ', h, ϕ))
         kh2k1 = log(inner(ψ'', h2, ϕ))
         kmk1 = log(inner(ψ', m, ϕ))
         km2k1 = log(inner(ψ'', m2, ϕ))
-        kk1 = log(l - khk) # ⟨k|k+1⟩ = ⟨k|(l - h)|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩ = l⟨k|k⟩ - ⟨k|h|k⟩
-        khk = log(khk)
+        kk1 = logdot(ψ, ϕ)
 
         ψ = deepcopy(ϕ)
-        norm_k = []
-        normalize!(ψ; (lognorm!)=norm_k)
+        kk = lognorm(ψ)
+        normalize!(ψ)
 
         for (i, t) in enumerate(temps)
             factor = factors[i, k+1]
             new_factor = factor + log(n) - log(t) - log(2k + 1)
-            energy[i, 2k+1] = khk + factor
-            energy[i, 2k+2] = khk1 + new_factor
-            energy2[i, 2k+1] = kh2k + factor
-            energy2[i, 2k+2] = kh2k1 + new_factor
-            magnet[i, 2k+1] = kmk + factor
-            magnet[i, 2k+2] = kmk1 + new_factor
-            magnet2[i, 2k+1] = km2k + factor
-            magnet2[i, 2k+2] = km2k1 + new_factor
-            beta_norm[i, 2k+1] = factor
-            beta_norm[i, 2k+2] = kk1 + new_factor
-            factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + 2 * norm_k[1]
+            energys[i, 2k+1] = khk + factor
+            energys[i, 2k+2] = khk1 + new_factor
+            energysquares[i, 2k+1] = kh2k + factor
+            energysquares[i, 2k+2] = kh2k1 + new_factor
+            magnets[i, 2k+1] = kmk + factor
+            magnets[i, 2k+2] = kmk1 + new_factor
+            magnetsquares[i, 2k+1] = km2k + factor
+            magnetsquares[i, 2k+2] = km2k1 + new_factor
+            betanorms[i, 2k+1] = factor
+            betanorms[i, 2k+2] = kk1 + new_factor
+            factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + 2.0 * kk
         end
     end
 
     open(string(filename, "_mtpq.dat"), "w") do io
         for k in 1:kmax+1
-            write(io, "$(real(n*(l - mtpq_data[k, 1])/2(k-1)))\t$(real(mtpq_data[k, 1]))\t$(real(mtpq_data[k, 2] - mtpq_data[k, 1]^2))\n")
+            temp = real(n*(l - mtpqdata[k, 1])/2(k-1))
+            energy = real(mtpqdata[k, 1])
+            energysquare = real(mtpqdata[k, 2])
+            energyvariance = energysquare - energy^2
+            write(io, "$temp\t$(energy/n)\t$(energyvariance  / temp^2 / n)\n")
         end
     end
 
-    println("\ncanonical summation finished")
-
     open(string(filename, "_ctpq.dat"), "w") do io
         for (i, t) in enumerate(temps)
-            energyt = sort(energy[i, :]; by = x -> real(x))
-            energy2t = sort(energy2[i, :]; by = x -> real(x))
-            magnett = sort(magnet[i, :]; by = x -> real(x))
-            magnet2t = sort(magnet2[i, :]; by = x -> real(x))
-            beta_normt = sort(beta_norm[i, :]; by = x -> real(x))
+            sortedenergys = sort(energys[i, :]; by = x -> real(x))
+            sortedenergysquares = sort(energysquares[i, :]; by = x -> real(x))
+            sortedmagnets = sort(magnets[i, :]; by = x -> real(x))
+            sortedmagnetsquares = sort(magnetsquares[i, :]; by = x -> real(x))
+            sortedbetanorms = sort(betanorms[i, :]; by = x -> real(x))
 
-            divider = real(last(beta_normt))
+            divider = real(last(sortedbetanorms))
         
             ene = 0.0
-            for e in energyt
+            for e in sortedenergys
                 ene += exp(e - divider)
             end
 
             ene2 = 0.0
-            for e in energy2t
-                ene2 += exp(e - divider)
+            for e2 in sortedenergysquares
+                ene2 += exp(e2 - divider)
             end
 
             mag = 0.0
-            for e in magnett
-                mag += exp(e - divider)
+            for m in sortedmagnets
+                mag += exp(m - divider)
             end
 
             mag2 = 0.0
-            for e in magnet2t
-                mag2 += exp(e - divider)
+            for m2 in sortedmagnetsquares
+                mag2 += exp(m2 - divider)
             end
         
             bet_nor = 0.0
-            for b in beta_normt
+            for b in sortedbetanorms
                 bet_nor += exp(b - divider)
             end
 
@@ -223,7 +222,7 @@ function canonicalsummation(init::MPS, h::MPO, ξ::Int64, χ::Int64, l::Float64,
             dev_ene = ene2 / bet_nor - ene^2
             dev_mag = mag2 / bet_nor - mag^2
             
-            write(io, "$t\t$(real(ene))\t$(real(mag))\t$(n*real(dev_ene)/t^2)\t$(n*real(dev_mag)/t)\n")
+            write(io, "$t\t$(real(ene) / n)\t$(real(mag) / n)\t$(real(dev_ene) / t^2 / n)\t$(real(dev_mag) / t / n)\n")
         end
     end
 end

@@ -29,7 +29,7 @@ h = heisenberg(sites, n, J)
 # h = transverseising(sites, n, J, Γ)
 m = magnetization(sites, n)
 
-# canonicalsummation(ψ, h, ξ, χ, l, kmax, tempstep, numtemps, m)
+canonicalsummation(ψ, h, ξ, l)
 
 filename = "output"
 println("start calculating canonical summation")
@@ -77,7 +77,7 @@ for k = 0:kmax
 
     global ψ = deepcopy(ϕ)
     kk = norm(ψ)
-    global ψ = ψ / kk
+    normalize!(ψ)
 
     for (i, t) in enumerate(temps)
         factor = factors[i, k+1]
@@ -107,8 +107,6 @@ open(string(filename, "_mtpq.dat"), "w") do io
         write(io, "$temp\t$(ene/n)\t$(dev_ene  / temp^2 / n)\n")
     end
 end
-
-println("\ncanonical summation finished")
 
 open(string(filename, "_ctpq.dat"), "w") do io
     for (i, t) in enumerate(temps)
