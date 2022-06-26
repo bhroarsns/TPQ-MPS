@@ -31,26 +31,23 @@ function l_transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ
 end
 
 function heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64)
-    JJ = J
     mpo = OpSum()
     for j = 2:n
-        mpo += JJ / 2.0, "S+", j, "S-", j+1
-        mpo += JJ / 2.0, "S-", j, "S+ ", j+1
-        mpo += JJ, "Sz", j, "Sz", j+1
+        mpo += J / 2.0, "S+", j, "S-", j+1
+        mpo += J / 2.0, "S-", j, "S+ ", j+1
+        mpo += J, "Sz", j, "Sz", j+1
     end
     println("MPO of the energy density operator of the Heisenberg model generated")
     return MPO(mpo, sites)
 end
 
 function transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ::Float64)
-    JJ = J
-    ΓΓ = Γ
     mpo = OpSum()
     for j = 2:n
-        mpo += JJ, "Sz", j, "Sz", j+1
-        mpo += ΓΓ, "Sx", j
+        mpo += J, "Sz", j, "Sz", j+1
+        mpo += Γ, "Sx", j
     end
-    mpo += ΓΓ, "Sx", n + 1
+    mpo += Γ, "Sx", n + 1
     println("MPO of the energy density operator of the transverse Ising model generated")
     return MPO(mpo, sites)
 end

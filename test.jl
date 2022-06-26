@@ -5,15 +5,15 @@ include("./tpq_mps.jl")
 
 # physical feature
 n = 4 # system size
-# J = 1.0 # Heisenberg model parameter
-J = 4.0
-Γ = 2.0
+J = 1.0 # Heisenberg model parameter
+# J = 4.0
+# Γ = 2.0
 
 # MPS parameters
-χ = 10 # auxiliary site dimension (for future updates)
-ξ = χ # bond dimension
+χ = 20 # auxiliary site dimension (for future updates)
+ξ = 20 # bond dimension
 # mTPQ parameters
-l = 5.0
+l = 1.0
 kmax = 500
 # cTPQ parameters
 tempstep = 0.05
@@ -23,10 +23,10 @@ numtemps = 80
 ψ, sites = randomTPQMPS(n, χ, ξ)
 
 # prepare MPO
-# l_h = l_heisenberg(sites, n, J, l)
-# h = heisenberg(sites, n, J)
-l_h = l_transverseising(sites, n, J, Γ, l)
-h = transverseising(sites, n, J, Γ)
+l_h = l_heisenberg(sites, n, J, l)
+h = heisenberg(sites, n, J)
+# l_h = l_transverseising(sites, n, J, Γ, l)
+# h = transverseising(sites, n, J, Γ)
 m = magnetization(sites, n)
 
 # canonicalsummation(ψ, h, ξ, χ, l, kmax, tempstep, numtemps, m)
@@ -50,6 +50,8 @@ println("temperature range: from $(tempstep) to $(numtemps * tempstep)")
 # ψ = deepcopy(init)
 h2 = h' * h
 m2 = m' * m
+# h2 = contract(h', h, cutoff=-Inf)
+# m2 = contract(m', m, cutoff=-Inf)
 
 mtpq_data = zeros(Complex{Float64}, kmax+1, 2)
 
@@ -64,7 +66,7 @@ for k = 0:kmax
     mtpq_data[k+1, 1] = exp(khk)
     mtpq_data[k+1, 2] = exp(kh2k)
     
-    ϕ = apply(l_h, ψ)
+    global ϕ = apply(l_h, ψ)
     canonicalform!(ϕ, ξ, χ)
 
     khk1 = log(inner(ψ', h, ϕ))
@@ -73,9 +75,9 @@ for k = 0:kmax
     km2k1 = log(inner(ψ'', m2, ϕ))
     kk1 = logdot(ψ, ϕ)
 
-    ψ = deepcopy(ϕ)
+    global ψ = deepcopy(ϕ)
     kk = norm(ψ)
-    ψ = ψ / kk
+    global ψ = ψ / kk
 
     for (i, t) in enumerate(temps)
         factor = factors[i, k+1]
@@ -96,7 +98,13 @@ end
 
 open(string(filename, "_mtpq.dat"), "w") do io
     for k in 1:kmax+1
-        write(io, "$(real(n*(l - mtpq_data[k, 1])/2(k-1)))\t$(real(mtpq_data[k, 1]))\t$(real(mtpq_data[k, 2] - mtpq_data[k, 1]^2))\n")
+        temp = real(n*(l - mtpq_data[k, 1])/2(k-1))
+        ene = real(mtpq_data[k, 1])
+        ene2 = real(mtpq_data[k, 2])
+
+        dev_ene = ene2 - ene^2
+
+        write(io, "$temp\t$(ene/n)\t$(dev_ene  / temp^2 / n)\n")
     end
 end
 
