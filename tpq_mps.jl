@@ -69,21 +69,19 @@ function magnetization(sites::Vector{Index{Int64}}, n::Int64)
 end
 
 function randomTPQMPS(system_size::Int64, χ::Int64, ξ::Int64, sitetype::String="S=1/2")
-    sites = siteinds(sitetype, system_size)
-    sizehint!(sites, system_size + 2)
-    pushfirst!(sites, Index(χ, tags="Link,l=1"))
-    push!(sites, Index(χ, tags="Site,aux-R"))
+    sites = siteinds(sitetype, system_size + 2)
+    sites[1] = Index(χ, tags="Link,l=1")
+    sites[system_size + 2] = Index(χ, tags="Site,aux-R")
 
     ψ = randomMPS(Complex{Float64}, sites, ξ)
     ψ[1] = delta(Complex{Float64}, sites[1], linkinds(ψ, 1))
     ψ[system_size + 2] = delta(Complex{Float64}, linkinds(ψ, system_size + 1), sites[system_size + 2])
 
+    # replace #1 site by auxiliary site
     auxL = Index(χ, tags="Site,aux-L")
     ψ[2] = ψ[1] * ψ[2]
     ψ[1] = delta(Complex{Float64}, auxL, sites[1])
-
-    popfirst!(sites)
-    pushfirst!(sites, auxL)
+    sites[1] = auxL
 
     println("initial state successfully generated: norm = $(norm(ψ)) vs sqrt(χ) = $(sqrt(χ))")
     return (ψ, sites)
