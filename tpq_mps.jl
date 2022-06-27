@@ -5,6 +5,7 @@ using Printf
 
 function l_heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64, l::Float64)
     JJ = J / n
+
     mpo = OpSum()
     mpo += l, "I", 1
     for j = 2:n
@@ -12,6 +13,7 @@ function l_heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64, l::Floa
         mpo += -JJ / 2.0, "S-", j, "S+ ", j+1
         mpo += -JJ, "Sz", j, "Sz", j+1
     end
+
     println("MPO of the iteration operator of the Heisenberg model generated")
     return MPO(mpo, sites)
 end
@@ -19,6 +21,7 @@ end
 function l_transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ::Float64, l::Float64)
     JJ = J / n
     ΓΓ = Γ / n
+
     mpo = OpSum()
     mpo += l, "I", 1
     for j = 2:n
@@ -26,6 +29,7 @@ function l_transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ
         mpo += -ΓΓ, "Sx", j
     end
     mpo += ΓΓ, "Sx", n + 1
+
     println("MPO of the iteration operator of the transverse Ising model generated")
     return MPO(mpo, sites)
 end
@@ -37,6 +41,7 @@ function heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64)
         mpo += J / 2.0, "S-", j, "S+ ", j+1
         mpo += J, "Sz", j, "Sz", j+1
     end
+
     println("MPO of the energy density operator of the Heisenberg model generated")
     return MPO(mpo, sites)
 end
@@ -48,6 +53,7 @@ function transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ::
         mpo += Γ, "Sx", j
     end
     mpo += Γ, "Sx", n + 1
+
     println("MPO of the energy density operator of the transverse Ising model generated")
     return MPO(mpo, sites)
 end
@@ -57,6 +63,7 @@ function magnetization(sites::Vector{Index{Int64}}, n::Int64)
     for j = 2:n+1
         mpo += "Sz", j
     end
+
     println("MPO of magnetization generated")
     return MPO(mpo, sites)
 end
@@ -64,13 +71,21 @@ end
 function randomTPQMPS(system_size::Int64, χ::Int64, ξ::Int64, sitetype::String="S=1/2")
     sites = siteinds(sitetype, system_size)
     sizehint!(sites, system_size + 2)
-    pushfirst!(sites, Index(χ, tags="Site,aux-L"))
+    pushfirst!(sites, Index(χ, tags="Link,l=1"))
     push!(sites, Index(χ, tags="Site,aux-R"))
+
     ψ = randomMPS(Complex{Float64}, sites, ξ)
     ψ[1] = delta(Complex{Float64}, sites[1], linkinds(ψ, 1))
     ψ[system_size + 2] = delta(Complex{Float64}, linkinds(ψ, system_size + 1), sites[system_size + 2])
-    println("initial state successfully generated: norm = $(norm(ψ)) vs sqrt(χ) = $(sqrt(χ))")
 
+    auxL = Index(χ, tags="Site,aux-L")
+    ψ[2] = ψ[1] * ψ[2]
+    ψ[1] = delta(Complex{Float64}, auxL, sites[1])
+
+    popfirst!(sites)
+    pushfirst!(sites, auxL)
+
+    println("initial state successfully generated: norm = $(norm(ψ)) vs sqrt(χ) = $(sqrt(χ))")
     return (ψ, sites)
 end
 
@@ -80,34 +95,34 @@ function canonicalform!(A::MPS, ξ::Int64, χ::Int64)
 
     if len != 1
         U1, s1, V1 = LinearAlgebra.svd(A[1] * A[2], sites[1])
-        prev_link, _ = inds(s1)
+        prevlink, _ = inds(s1)
         A[1] = U1
         A[2] = s1 * V1
 
         for j = 2:len-1
-            Uj, sj, Vj = LinearAlgebra.svd(A[j] * A[j + 1], sites[j], prev_link)
-            prev_link, _ = inds(sj)
+            Uj, sj, Vj = LinearAlgebra.svd(A[j] * A[j + 1], sites[j], prevlink)
+            prevlink, _ = inds(sj)
             A[j] = Uj
             A[j + 1] = sj * Vj
         end
 
         Vn, sn, Un = LinearAlgebra.svd(A[len - 1] * A[len], sites[len]; lefttags = "Link,l=$(len-1)", maxdim = χ)
-        prev_link, _ = inds(sn)
+        prevlink, _ = inds(sn)
         A[len] = Vn
         A[len - 1] = Un * sn
 
         for j = len-1:-1:3
-            Vj, sj, Uj = LinearAlgebra.svd(A[j - 1] * A[j], sites[j], prev_link; lefttags = "Link,l=$(j-1)", maxdim = ξ)
-            prev_link, _ = inds(sj)
+            Vj, sj, Uj = LinearAlgebra.svd(A[j - 1] * A[j], sites[j], prevlink; lefttags = "Link,l=$(j-1)", maxdim = ξ)
+            prevlink, _ = inds(sj)
             A[j] = Vj
             A[j - 1] = Uj * sj
         end
     end
 end
 
-function canonicalsummation(init::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int64=ξ, kmax::Int64=500, tempstep::Float64=0.05, numtemps::Int64=80, filename::String="output")
+function canonicalsummation(initial::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int64=ξ, kmax::Int64=500, tempstep::Float64=0.05, numtemps::Int64=80, filename::String="output")
     println("start calculating canonical summation")
-    ψ = deepcopy(init)
+    ψ = deepcopy(initial)
     n = length(ψ) - 2
 
     # operator preparation
@@ -177,6 +192,7 @@ function canonicalsummation(init::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int64=
             energy = real(mtpqdata[k, 1])
             energysquare = real(mtpqdata[k, 2])
             energyvariance = energysquare - energy^2
+
             write(io, "$temp\t$(energy/n)\t$(energyvariance  / temp^2 / n)\n")
         end
     end
@@ -218,7 +234,6 @@ function canonicalsummation(init::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int64=
 
             ene = ene / bet_nor
             mag = mag / bet_nor
-
             dev_ene = ene2 / bet_nor - ene^2
             dev_mag = mag2 / bet_nor - mag^2
             
