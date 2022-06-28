@@ -7,14 +7,14 @@ function l_heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64, l::Floa
     JJ = J / n
 
     mpo = OpSum()
-    mpo += l, "I", 1
+    mpo += l, "I", 2
     for j = 2:n
         mpo += -JJ / 2.0, "S+", j, "S-", j+1
         mpo += -JJ / 2.0, "S-", j, "S+ ", j+1
         mpo += -JJ, "Sz", j, "Sz", j+1
     end
 
-    println("MPO of the iteration operator of the Heisenberg model generated")
+    println("iteration operator of the Heisenberg model generated")
     return MPO(mpo, sites)
 end
 
@@ -23,14 +23,14 @@ function l_transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ
     ΓΓ = Γ / n
 
     mpo = OpSum()
-    mpo += l, "I", 1
+    mpo += l, "I", 2
     for j = 2:n
         mpo += -JJ, "Sz", j, "Sz", j+1
         mpo += -ΓΓ, "Sx", j
     end
-    mpo += ΓΓ, "Sx", n + 1
+    mpo += -ΓΓ, "Sx", n + 1
 
-    println("MPO of the iteration operator of the transverse Ising model generated")
+    println("iteration operator of the transverse Ising model generated")
     return MPO(mpo, sites)
 end
 
@@ -71,11 +71,9 @@ end
 function randomTPQMPS(system_size::Int64, χ::Int64, ξ::Int64, sitetype::String="S=1/2")
     sites = siteinds(sitetype, system_size + 2)
     sites[1] = Index(χ, tags="Link,l=1")
-    sites[system_size + 2] = Index(χ, tags="Site,aux-R")
+    sites[system_size + 2] = Index(χ, tags="Link,l=$(system_size+1)")
 
     ψ = randomMPS(Complex{Float64}, sites, ξ)
-    ψ[1] = delta(Complex{Float64}, sites[1], linkinds(ψ, 1))
-    ψ[system_size + 2] = delta(Complex{Float64}, linkinds(ψ, system_size + 1), sites[system_size + 2])
 
     # replace #1 site by auxiliary site
     auxL = Index(χ, tags="Site,aux-L")
@@ -83,7 +81,13 @@ function randomTPQMPS(system_size::Int64, χ::Int64, ξ::Int64, sitetype::String
     ψ[1] = delta(Complex{Float64}, auxL, sites[1])
     sites[1] = auxL
 
-    println("initial state successfully generated: norm = $(norm(ψ)) vs sqrt(χ) = $(sqrt(χ))")
+    # replace #n+1 site by auxiliary site
+    auxR = Index(χ, tags="Site,aux-R")
+    ψ[system_size + 1] = ψ[system_size + 1] * ψ[system_size + 2]
+    ψ[system_size + 2] = delta(Complex{Float64}, sites[system_size + 2], auxR)
+    sites[system_size + 2] = auxR
+
+    println("initial state successfully generated")
     return (ψ, sites)
 end
 
@@ -92,7 +96,7 @@ function canonicalform!(A::MPS, ξ::Int64, χ::Int64)
     sites = siteinds(A)
 
     if len != 1
-        U1, s1, V1 = LinearAlgebra.svd(A[1] * A[2], sites[1])
+        U1, s1, V1 = LinearAlgebra.svd(A[1] * A[2], sites[1]; lefttags = "Link,l=1")
         prevlink, _ = inds(s1)
         A[1] = U1
         A[2] = s1 * V1
@@ -118,7 +122,9 @@ function canonicalform!(A::MPS, ξ::Int64, χ::Int64)
     end
 end
 
-function canonicalsummation(initial::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int64=ξ, kmax::Int64=500, tempstep::Float64=0.05, numtemps::Int64=80, filename::String="output")
+function canonicalsummation(initial::MPS, l_h::MPO, h::MPO, ξ::Int64, l::Float64; χ::Int64=ξ, kmax::Int64=500, tempstep::Float64=0.05, numtemps::Int64=80, filename::String="output")
+    println("")
+    println("=====================================")
     println("start calculating canonical summation")
     ψ = deepcopy(initial)
     n = length(ψ) - 2
@@ -127,8 +133,8 @@ function canonicalsummation(initial::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int
     m = magnetization(siteinds(ψ), n)
     h2 = h' * h
     m2 = m' * m
-    # h2 = contract(h', h, cutoff=-Inf)
-    # m2 = contract(m', m, cutoff=-Inf)
+    # h2 = contract(h', h, truncate=false)
+    # m2 = contract(m', m, truncate=false)
 
     # data storage
     energys = zeros(Complex{Float64}, numtemps, 2kmax + 2)
@@ -154,7 +160,7 @@ function canonicalsummation(initial::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int
         mtpqdata[k+1, 1] = exp(khk)
         mtpqdata[k+1, 2] = exp(kh2k)
         
-        ϕ = apply(l_h, ψ)
+        ϕ = apply(l_h, ψ#=, truncate=false=#)
         canonicalform!(ϕ, ξ, χ)
 
         khk1 = log(inner(ψ', h, ϕ))
@@ -183,6 +189,7 @@ function canonicalsummation(initial::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int
             factors[i, k+2] = new_factor + log(n) - log(t) - log(2k + 2) + 2.0 * kk
         end
     end
+    println("\rcanonical summation finished")
 
     open(string(filename, "_mtpq.dat"), "w") do io
         for k in 1:kmax+1
@@ -191,8 +198,9 @@ function canonicalsummation(initial::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int
             energysquare = real(mtpqdata[k, 2])
             energyvariance = energysquare - energy^2
 
-            write(io, "$temp\t$(energy/n)\t$(energyvariance  / temp^2 / n)\n")
+            write(io, "$temp\t$(energy/n)\t$(energyvariance / temp^2 /n)\t$energyvariance\t$energy\t$energysquare\n")
         end
+        println("output written in \"$(filename)_mtpq.dat\"")
     end
 
     open(string(filename, "_ctpq.dat"), "w") do io
@@ -237,5 +245,8 @@ function canonicalsummation(initial::MPS, h::MPO, ξ::Int64, l::Float64, χ::Int
             
             write(io, "$t\t$(real(ene) / n)\t$(real(mag) / n)\t$(real(dev_ene) / t^2 / n)\t$(real(dev_mag) / t / n)\n")
         end
+        println("output written in \"$(filename)_ctpq.dat\"")
     end
+    println("=====================================")
+    println("")
 end
