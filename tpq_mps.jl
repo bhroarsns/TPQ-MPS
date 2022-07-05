@@ -1,24 +1,22 @@
-export l_heisenberg, l_transverseising, heisenberg, transverseising, magnetization, randomTPQMPS, canonicalform!, canonicalsummation
-
 using ITensors
 using Printf
 using Dates
 
-function l_heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64, l::Float64)
+function l_heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Complex{Float64}, l::Complex{Float64})
     JJ = J / n
 
     mpo = OpSum()
     mpo += l, "I", 2
     for j = 2:n
-        mpo += -JJ / 2.0, "S+", j, "S-", j+1
-        mpo += -JJ / 2.0, "S-", j, "S+ ", j+1
+        mpo += -JJ / (2.0 + 0.0im), "S+", j, "S-", j+1
+        mpo += -JJ / (2.0 + 0.0im), "S-", j, "S+ ", j+1
         mpo += -JJ, "Sz", j, "Sz", j+1
     end
 
     return MPO(mpo, sites)
 end
 
-function l_transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ::Float64, l::Float64)
+function l_transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Complex{Float64}, Γ::Complex{Float64}, l::Complex{Float64})
     JJ = J / n
     ΓΓ = Γ / n
 
@@ -33,18 +31,18 @@ function l_transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ
     return MPO(mpo, sites)
 end
 
-function heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Float64)
+function heisenberg(sites::Vector{Index{Int64}}, n::Int64, J::Complex{Float64})
     mpo = OpSum()
     for j = 2:n
-        mpo += J / 2.0, "S+", j, "S-", j+1
-        mpo += J / 2.0, "S-", j, "S+ ", j+1
+        mpo += J / (2.0 + 0.0im), "S+", j, "S-", j+1
+        mpo += J / (2.0 + 0.0im), "S-", j, "S+ ", j+1
         mpo += J, "Sz", j, "Sz", j+1
     end
 
     return MPO(mpo, sites)
 end
 
-function transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Float64, Γ::Float64)
+function transverseising(sites::Vector{Index{Int64}}, n::Int64, J::Complex{Float64}, Γ::Complex{Float64})
     mpo = OpSum()
     for j = 2:n
         mpo += J, "Sz", j, "Sz", j+1
@@ -89,36 +87,27 @@ end
 
 function canonicalform!(A::MPS, bonddimension::Int64, auxdimension::Int64)
     len = length(A)
-    sites = siteinds(A)
 
     if len != 1
-        U1, P1 = factorize(A[1] * A[2], sites[1]; which_decomp="qr")
-        prevlink, _ = inds(P1)
-        A[1] = U1
-        A[2] = P1
-
-        for j = 2:len-1
-            Uj, Pj = factorize(A[j] * A[j+1], prevlink, sites[j]; which_decomp="qr")
-            prevlink, _ = inds(Pj)
-            A[j] = Uj
-            A[j+1] = Pj
+        for i = 1:len-2
+            Qi, Ri = factorize(A[i] * A[i+1], uniqueinds(A[i], A[i+1]); which_decomp="qr", tags="Link,l=1")
+            A[i] = Qi
+            A[i+1] = Ri
         end
 
-        Vn, Pn = factorize(A[len-1] * A[len], sites[len]; which_decomp="svd", maxdim=auxdimension)
-        prevlink, _ = inds(Pn)
+        Vn, snUn = factorize(A[len] * A[len-1], uniqueinds(A[len], A[len-1]); which_decomp="svd", maxdim=auxdimension, tags="Link,l=$(len-1)")
         A[len] = Vn
-        A[len-1] = Pn
+        A[len-1] = snUn
 
-        for j = len-1:-1:3
-            Vj, Pj = factorize(A[j - 1] * A[j], sites[j], prevlink; which_decomp="svd", maxdim = bonddimension)
-            prevlink, _ = inds(Pj)
-            A[j] = Vj
-            A[j - 1] = Pj
+        for i = len-1:-1:3
+            Vi, siUi = factorize(A[i] * A[i-1], uniqueinds(A[i], A[i-1]); which_decomp="svd", maxdim=bonddimension, tags="Link,l=$(i-1)")
+            A[i] = Vi
+            A[i-1] = siUi
         end
     end
 end
 
-function canonicalsummation(initial::MPS, l_h::MPO, hamiltonian::MPO, bonddimension::Int64, l::Float64; auxdimension::Int64=bonddimension, kmax::Int64=500, tempstep::Float64=0.05, numtemps::Int64=80, filename::String="output")
+function canonicalsummation(initial::MPS, l_h::MPO, hamiltonian::MPO, bonddimension::Int64, l::Complex{Float64}; auxdimension::Int64=bonddimension, kmax::Int64=500, tempstep::Float64=0.05, numtemps::Int64=80, filename::String="output")
     println("")
     println("=====================================")
     println("$(Dates.now()): start calculating canonical summation")
@@ -137,14 +126,14 @@ function canonicalsummation(initial::MPS, l_h::MPO, hamiltonian::MPO, bonddimens
     magnetsquares = zeros(Complex{Float64}, numtemps, 2kmax + 2)
     betanorms = zeros(Complex{Float64}, numtemps, 2kmax + 2)
     factors = zeros(Complex{Float64}, numtemps, kmax + 2)
-    mtpqdata = zeros(Complex{Float64}, kmax+1, 2)
+    mtpqdata = zeros(Complex{Float64}, kmax+1, 4)
 
     # temperatures to calculate cTPQ
     temps = (numtemps * tempstep):-tempstep:tempstep
     println("temperature range: from $(tempstep) to $(numtemps * tempstep)")
 
     for k = 0:kmax
-        @printf "\rstep %03i" k
+        @printf "\rstep %03i\n" k
         
         khk = log(inner(ψ', hamiltonian, ψ))
         kh2k = log(inner(ψ'', h2, ψ))
@@ -153,6 +142,8 @@ function canonicalsummation(initial::MPS, l_h::MPO, hamiltonian::MPO, bonddimens
 
         mtpqdata[k+1, 1] = exp(khk)
         mtpqdata[k+1, 2] = exp(kh2k)
+        mtpqdata[k+1, 3] = exp(kmk)
+        mtpqdata[k+1, 4] = exp(km2k)
         
         ϕ = apply(l_h, ψ)
         canonicalform!(ϕ, bonddimension, auxdimension)
@@ -186,20 +177,24 @@ function canonicalsummation(initial::MPS, l_h::MPO, hamiltonian::MPO, bonddimens
     println("\r$(Dates.now()): canonical summation finished")
 
     open(string(filename, "_mtpq.dat"), "w") do io
-        write(io, "# temperature, energy density, specific heat, energy variance, energy, energy^2\n")
+        println(io, "# k_BT, h, m, C/N, chi, delta E, delta M")
         for k in 1:kmax+1
             temp = real(n*(l - mtpqdata[k, 1])/2(k-1))
             energy = real(mtpqdata[k, 1])
             energysquare = real(mtpqdata[k, 2])
             energyvariance = energysquare - energy^2
 
-            write(io, "$temp $(energy/n) $(energyvariance / temp^2 /n) $energyvariance $energy $energysquare\n")
+            magnet = real(mtpqdata[k, 3])
+            magnetsquare = real(mtpqdata[k, 4])
+            magnetvariance = magnetsquare - magnet^2
+
+            println(io, temp, " ", energy/n, " ", magnet/n, " ", energyvariance/temp^2/n, " ", magnetvariance/temp/n, " ", energyvariance, " ", magnetvariance)
         end
         println("output written in \"$(filename)_mtpq.dat\"")
     end
 
     open(string(filename, "_ctpq.dat"), "w") do io
-        write(io, "# temperature, energy density, mean magnetization, specific heat, susceptibility, norm^2\n")
+        println(io, "# k_BT, <a|H|a>, <a|S_z|a>, <a|H^2|a>, <a|S_z^2|a>, <a|a>, N")
         for (i, t) in enumerate(temps)
             sortedenergys = sort(energys[i, :]; by = x -> real(x))
             sortedenergysquares = sort(energysquares[i, :]; by = x -> real(x))
@@ -234,7 +229,7 @@ function canonicalsummation(initial::MPS, l_h::MPO, hamiltonian::MPO, bonddimens
                 bet_nor += exp(b - divider)
             end
             
-            write(io, "$t $(real(ene) / n) $(real(mag) / n) $(real(ene2) / n) $(real(mag2) / n) $(real(bet_nor))\n")
+            println(io, t, " ", real(ene), " ", real(mag), " ", real(ene2), " ", real(mag2), " ", real(bet_nor), " ", n)
         end
         println("output written in \"$(filename)_ctpq.dat\"")
     end
